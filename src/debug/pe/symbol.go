@@ -96,3 +96,91 @@ type Symbol struct {
 	Type          uint16
 	StorageClass  uint8
 }
+
+func readOptionalHeader(r io.ReadSeeker, sz uint16) (interface{}, error) {
+	// If optional header size is 0, return empty optional header.
+	if sz == 0 {
+		return nil, nil
+	}
+
+	var (
+		ohMagic   uint16
+		ohMagicSz = binary.Size(ohMagic)
+	)
+
+	// If optional header size is greater than 0 but less than its magic size, return error.
+	if sz < uint16(ohMagicSz) {
+		return nil, fmt.Errorf("optional header size is less than optional header magic size")
+	}
+
+	// First just read optional header magic.
+	if err := binary.Read(r, binary.LittleEndian, &ohMagic); err != nil {
+		return nil, fmt.Errorf("failure to read optional header magic: %v", err)
+	}
+
+	// Seek back by optional header magic's size.
+	r.Seek(-int64(ohMagicSz), seekCurrent)
+
+	switch ohMagic {
+	case 0x10b: // PE32
+		var (
+			oh32Base   optionalHeader32Base
+			oh32BaseSz = binary.Size(oh32Base)
+		)
+		if sz < uint16(oh32BaseSz) {
+			return nil, fmt.Errorf("optional header size(%d) is less base size (%d) for PE32 optional header", sz, oh32BaseSz)
+		}
+
+		if err := binary.Read(r, binary.LittleEndian, &oh32Base); err != nil {
+			return nil, fmt.Errorf("failure to read PE32 optional header: %v", err)
+		}
+
+		dd, err := readDataDirectories(r, sz-uint16(oh32BaseSz), oh32Base.NumberOfRvaAndSizes)
+		if err != nil {
+			return nil, err
+		}
+
+		oh32 := new(OptionalHeader32)
+		oh32.init(oh32Base, dd)
+
+		return oh32, nil
+	case 0x20b: // PE32+
+		var (
+			oh64Base   optionalHeader64Base
+			oh64BaseSz = binary.Size(oh64Base)
+		)
+		if sz < uint16(oh64BaseSz) {
+			return nil, fmt.Errorf("optional header size(%d) is less base size (%d) for PE32+ optional header", sz, oh64BaseSz)
+		}
+
+		if err := binary.Read(r, binary.LittleEndian, &oh64Base); err != nil {
+			return nil, fmt.Errorf("failure to read PE32+ optional header: %v", err)
+		}
+
+		dd, err := readDataDirectories(r, sz-uint16(oh64BaseSz), oh64Base.NumberOfRvaAndSizes)
+		if err != nil {
+			return nil, err
+		}
+
+		oh64 := new(OptionalHeader64)
+		oh64.init(oh64Base, dd)
+
+		return oh64, nil
+	default:
+		return nil, fmt.Errorf("optional header has unexpected Magic of 0x%x", ohMagic)
+	}
+}
+
+func readDataDirectories(r io.ReadSeeker, sz uint16, n uint32) ([]DataDirectory, error) {
+	ddSz := binary.Size(DataDirectory{})
+	if uint32(sz) != n*uint32(ddSz) {
+		return nil, fmt.Errorf("size of data directories(%d) is inconsistent with number of data directories(%d)", sz, n)
+	}
+
+	dd := make([]DataDirectory, n)
+	if err := binary.Read(r, binary.LittleEndian, dd); err != nil {
+		return nil, fmt.Errorf("failure to read data directories: %v", err)
+	}
+
+	return dd, nil
+}
