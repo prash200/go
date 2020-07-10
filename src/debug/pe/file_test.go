@@ -211,6 +211,37 @@ var fileTests = []fileTest{
 			{".debug_ranges", 0xa70, 0x44000, 0xc00, 0x38a00, 0x0, 0x0, 0x0, 0x0, 0x42100040},
 		},
 	},
+	{
+		file: "testdata/vmlinuz-4.15.0-47-generic",
+		hdr:  FileHeader{0x8664, 0x4, 0x0, 0x0, 0x1, 0xa0, 0x206},
+		opthdr: &OptionalHeader64{
+			0x20b, 0x2, 0x14, 0x7c0590, 0x0, 0x168f870, 0x4680, 0x200, 0x0, 0x20, 0x20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1e50000, 0x200, 0x7c3ab0, 0xa, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x6,
+			[16]DataDirectory{
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x7c07a0, 0x778},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+				{0x0, 0x0},
+			}},
+		sections: []*SectionHeader{
+			{".setup", 0x41e0, 0x200, 0x41e0, 0x200, 0x0, 0x0, 0x0, 0x0, 0x60500020},
+			{".reloc", 0x20, 0x43e0, 0x20, 0x43e0, 0x0, 0x0, 0x0, 0x0, 0x42100040},
+			{".text", 0x7bc390, 0x4400, 0x7bc390, 0x4400, 0x0, 0x0, 0x0, 0x0, 0x60500020},
+			{".bss", 0x168f870, 0x7c0790, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc8000080},
+		},
+		hasNoDwarfInfo: true,
+	},
 }
 
 func isOptHdrEq(a, b interface{}) bool {
@@ -631,12 +662,27 @@ func TestImportTableInUnknownSection(t *testing.T) {
 
 func TestInvalidFormat(t *testing.T) {
 	crashers := [][]byte{
-		// https://golang.org/issue/30250
 		[]byte("\x00\x00\x00\x0000000\x00\x00\x00\x00\x00\x00\x000000" +
 			"00000000000000000000" +
 			"000000000\x00\x00\x0000000000" +
 			"00000000000000000000" +
 			"0000000000000000"),
+		}
+
+	for _, data := range crashers {
+		_, err := NewFile(bytes.NewReader(data))
+		if err == nil {
+			t.Fatal("NewFile succeeded unexpectedly")
+		}
+	}
+}
+
+func TestImportedSymbolsNoPanic(t *testing.T) {
+	noOhData, _ := ioutil.ReadFile("testdata/gcc-amd64-mingw-obj")
+	crashers := [][]byte{
+		// https://golang.org/issue/30250
+		// ImportedSymbols shouldn't panic if optional headers is not present
+		noOhData,
 		// https://golang.org/issue/30253
 		[]byte("L\x01\b\x00regi\x00\x00\x00\x00\x00\x00\x00\x00\xe0\x00\x0f\x03" +
 			"\v\x01\x02\x18\x00\x0e\x00\x00\x00\x1e\x00\x00\x00\x02\x00\x00\x80\x12\x00\x00" +
@@ -672,8 +718,9 @@ func TestInvalidFormat(t *testing.T) {
 	for _, data := range crashers {
 		f, err := NewFile(bytes.NewReader(data))
 		if err != nil {
-			t.Error(err)
+			t.Fatal(err)
 		}
+
 		f.ImportedSymbols()
 	}
 }

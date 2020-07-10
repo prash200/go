@@ -17,7 +17,10 @@ import (
 )
 
 // Avoid use of post-Go 1.4 io features, to make safe for toolchain bootstrap.
-const seekStart = 0
+const (
+	seekStart   = 0
+	seekCurrent = 1
+)
 
 // A File represents an open PE file.
 type File struct {
@@ -57,11 +60,6 @@ func (f *File) Close() error {
 	}
 	return err
 }
-
-var (
-	sizeofOptionalHeader32 = uint16(binary.Size(OptionalHeader32{}))
-	sizeofOptionalHeader64 = uint16(binary.Size(OptionalHeader64{}))
-)
 
 // TODO(brainman): add Load function, as a replacement for NewFile, that does not call removeAuxSymbols (for performance)
 
@@ -114,30 +112,16 @@ func NewFile(r io.ReaderAt) (*File, error) {
 		return nil, err
 	}
 
-	// Read optional header.
-	sr.Seek(base, seekStart)
-	if err := binary.Read(sr, binary.LittleEndian, &f.FileHeader); err != nil {
-		return nil, err
+	// Seek past file header.
+	_, err = sr.Seek(base+int64(binary.Size(f.FileHeader)), seekStart)
+	if err != nil {
+		return nil, fmt.Errorf("failure to seek to past the file header: %v", err)
 	}
-	var oh32 OptionalHeader32
-	var oh64 OptionalHeader64
-	switch f.FileHeader.SizeOfOptionalHeader {
-	case sizeofOptionalHeader32:
-		if err := binary.Read(sr, binary.LittleEndian, &oh32); err != nil {
-			return nil, err
-		}
-		if oh32.Magic != 0x10b { // PE32
-			return nil, fmt.Errorf("pe32 optional header has unexpected Magic of 0x%x", oh32.Magic)
-		}
-		f.OptionalHeader = &oh32
-	case sizeofOptionalHeader64:
-		if err := binary.Read(sr, binary.LittleEndian, &oh64); err != nil {
-			return nil, err
-		}
-		if oh64.Magic != 0x20b { // PE32+
-			return nil, fmt.Errorf("pe32+ optional header has unexpected Magic of 0x%x", oh64.Magic)
-		}
-		f.OptionalHeader = &oh64
+
+	// Read optional header.
+	f.OptionalHeader, err = readOptionalHeader(sr, f.FileHeader.SizeOfOptionalHeader)
+	if err != nil {
+		return nil, err
 	}
 
 	// Process sections.
